@@ -23,14 +23,73 @@ class EnrollmentView(APIView):
         registration_id = str(request.data.get("registration_id", "")).strip()
         correlation_id = str(request.headers.get("X-Correlation-ID", "")).strip()[:128]
         action = str(request.data.get("action", "enroll")).lower()
-        user_id = request.data.get("user_id")
-        if not all([course_id, registration_id, user_id]) or action not in {"enroll", "unenroll"}:
-            return Response({"error": {"code": "invalid_request", "message": "course_id, registration_id, user_id and a valid action are required."}}, status=400)
+        user_id = str(request.data.get("user_id", "")).strip()
+        email = str(request.data.get("email", "")).strip().lower()
+
+        if (
+            not course_id
+            or not registration_id
+            or not user_id
+            or not email
+            or action not in {"enroll", "unenroll"}
+        ):
+            return Response(
+                {
+                    "error": {
+                        "code": "invalid_request",
+                        "message": (
+                            "course_id, registration_id, user_id, email "
+                            "and a valid action are required."
+                        ),
+                    }
+                },
+                status=400,
+            )
         if not ManagedCourseRun.objects.filter(course_id=course_id, enabled=True).exists():
             return Response({"error": {"code": "course_not_managed", "message": "Course run is not managed by KKUx registration."}}, status=409)
-        user = get_user_model().objects.filter(id=user_id).first()
-        if not user:
-            return Response({"error": {"code": "user_not_found", "message": "Open edX user was not found."}}, status=404)
+        User = get_user_model()
+
+        user = None
+
+        # Some Open edX JWTs use the numeric Django user ID as `sub`.
+        if user_id.isdigit():
+            user = User.objects.filter(
+                id=int(user_id),
+                email__iexact=email,
+                is_active=True,
+            ).first()
+
+        # KKUx JWT `sub` is currently an opaque identifier, so resolve the
+        # authenticated learner using the verified JWT email sent by the backend.
+        if user is None:
+            matching_users = User.objects.filter(
+                email__iexact=email,
+                is_active=True,
+            )
+
+            if matching_users.count() > 1:
+                return Response(
+                    {
+                        "error": {
+                            "code": "learner_identity_ambiguous",
+                            "message": "Multiple active Open edX users use this email.",
+                        }
+                    },
+                    status=409,
+                )
+
+            user = matching_users.first()
+
+        if user is None:
+            return Response(
+                {
+                    "error": {
+                        "code": "user_not_found",
+                        "message": "The active Open edX learner was not found.",
+                    }
+                },
+                status=404,
+            )
         try:
             with transaction.atomic():
                 record, created = EnrollmentRequest.objects.get_or_create(
