@@ -2,7 +2,7 @@ import secrets
 from django.conf import settings
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
-
+from django.contrib.auth.models import AnonymousUser
 
 class ServiceTokenAuthentication(BaseAuthentication):
     def authenticate(self, request):
@@ -11,4 +11,4 @@ class ServiceTokenAuthentication(BaseAuthentication):
         supplied = header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
         if not expected or not supplied or not secrets.compare_digest(expected, supplied):
             raise AuthenticationFailed("Invalid KKUx enrollment service token.")
-        return (None, "kkux-registration-backend")
+        return (AnonymousUser(), "kkux-registration-backend")
